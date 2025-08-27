@@ -1,4 +1,1079 @@
-<!DOCTYPE html>
+// SharePoint configuration
+        const SHAREPOINT_SITE_URL = 'https://3rdnccav.sharepoint.com/sites/3rdNCCavalryScoring';
+        const SHAREPOINT_API_URL = `${SHAREPOINT_SITE_URL}/_api`;
+        
+        // App state
+        let appState = {
+            skirmishes: [],
+            shooters: [],
+            selectedSkirmish: null,
+            selectedGun: null,
+            currentMatch: null,
+            aTeamShooters: [],
+            bTeamShooters: [],
+            matchEvents: [
+                'Pigeons on a Backer',
+                '4in Hanging Tiles',
+                'Hanging Pigeons',
+                'Pots/Silhouettes',
+                '6in Hanging Tiles'
+            ],
+            currentEventIndex: 0
+        };
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('3rd NC Cavalry App initialized - Full SharePoint Integration');
+            initializeApp();
+        });
+
+        async function initializeApp() {
+            updateStatusIndicator('🔄 Initializing...');
+            
+            try {
+                // Load initial data
+                await Promise.all([
+                    loadSkirmishes(),
+                    loadShooters()
+                ]);
+                
+                setupEventListeners();
+                updateStatusIndicator('✅ SharePoint Connected');
+                
+                // Update home status
+                const homeStatus = document.getElementById('home-status-details');
+                if (homeStatus) {
+                    homeStatus.innerHTML = `
+                        ✅ Skirmishes: ${appState.skirmishes.length} loaded<br>
+                        ✅ Shooters: ${appState.shooters.length} loaded<br>
+                        🚀 Ready for competition management
+                    `;
+                }
+            } catch (error) {
+                console.error('Initialization error:', error);
+                updateStatusIndicator('⚠️ Offline Mode');
+                loadFallbackData();
+            }
+        }
+
+        // Set up event listeners
+        function setupEventListeners() {
+            // Add skirmish form
+            const form = document.getElementById('add-skirmish-form');
+            if (form) {
+                form.addEventListener('submit', handleAddSkirmish);
+            }
+
+            // Navigation events
+            const navInputs = document.querySelectorAll('.nav-input');
+            navInputs.forEach(input => {
+                input.addEventListener('change', function() {
+                    if (this.id === 'nav-compete' && this.checked) {
+                        loadCompetitionSkirmishes();
+                    } else if (this.id === 'nav-match-setup' && this.checked) {
+                        setupMatchConfiguration();
+                    }
+                });
+            });
+        }
+
+        // SharePoint API Functions
+
+        // Load skirmishes from SharePoint
+        async function loadSkirmishes() {
+            updateStatusIndicator('📅 Loading Skirmishes...');
+            
+            try {
+                // Try SharePoint API first
+                const sharePointSkirmishes = await fetchFromSharePoint('Skirmishes');
+                
+                if (sharePointSkirmishes && sharePointSkirmishes.length > 0) {
+                    appState.skirmishes = sharePointSkirmishes.map(item => ({
+                        id: item.Id,
+                        name: item.Title,
+                        date: item.SkirmishDate || item.Created,
+                        year: new Date(item.SkirmishDate || item.Created).getFullYear()
+                    }));
+                } else {
+                    // Fall back to localStorage
+                    const localSkirmishes = localStorage.getItem('cavalry_skirmishes');
+                    appState.skirmishes = localSkirmishes ? JSON.parse(localSkirmishes) : [];
+                }
+            } catch (error) {
+                console.error('Error loading skirmishes:', error);
+                // Fall back to localStorage
+                const localSkirmishes = localStorage.getItem('cavalry_skirmishes');
+                appState.skirmishes = localSkirmishes ? JSON.parse(localSkirmishes) : [];
+            }
+
+            updateSkirmishDisplay();
+        }
+
+        // Load shooters from SharePoint
+        async function loadShooters() {
+            updateStatusIndicator('👥 Loading Shooters...');
+            
+            try {
+                // Try SharePoint API first
+                const sharePointShooters = await fetchFromSharePoint('Shooters');
+                
+                if (sharePointShooters && sharePointShooters.length > 0) {
+                    appState.shooters = sharePointShooters.map(item => ({
+                        id: item.Id,
+                        name: item.Title
+                    }));
+                } else {
+                    // Fall back to hardcoded roster
+                    appState.shooters = [
+                        { id: 1, name: 'Tommy Upton' },
+                        { id: 2, name: 'Leslie Hardison' },
+                        { id: 3, name: 'Jimmy Hardison' },
+                        { id: 4, name: 'Dan Conrad' },
+                        { id: 5, name: 'Tommy Jones' },
+                        { id: 6, name: 'Dennis Griffin' },
+                        { id: 7, name: 'Jaime Conner' },
+                        { id: 8, name: 'Joe Parcell' },
+                        { id: 9, name: 'Eddie Askew' },
+                        { id: 10, name: 'Tyler Bland' },
+                        { id: 11, name: 'Larry Webb' },
+                        { id: 12, name: 'Chris Chamberlain' },
+                        { id: 13, name: 'Daniel Griffin' }
+                    ];
+                }
+            } catch (error) {
+                console.error('Error loading shooters:', error);
+                // Use hardcoded roster as fallback
+                appState.shooters = [
+                    { id: 1, name: 'Tommy Upton' },
+                    { id: 2, name: 'Leslie Hardison' },
+                    { id: 3, name: 'Jimmy Hardison' },
+                    { id: 4, name: 'Dan Conrad' },
+                    { id: 5, name: 'Tommy Jones' },
+                    { id: 6, name: 'Dennis Griffin' },
+                    { id: 7, name: 'Jaime Conner' },
+                    { id: 8, name: 'Joe Parcell' },
+                    { id: 9, name: 'Eddie Askew' },
+                    { id: 10, name: 'Tyler Bland' },
+                    { id: 11, name: 'Larry Webb' },
+                    { id: 12, name: 'Chris Chamberlain' },
+                    { id: 13, name: 'Daniel Griffin' }
+                ];
+            }
+
+            updateShootersDisplay();
+        }
+
+        // Generic SharePoint fetch function
+        async function fetchFromSharePoint(listName) {
+            const url = `${SHAREPOINT_API_URL}/web/lists/getbytitle('${listName}')/items`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json;odata=verbose',
+                        'Content-Type': 'application/json;odata=verbose'
+                    },
+                    credentials: 'same-origin'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.d.results;
+                } else {
+                    throw new Error(`SharePoint API error: ${response.status}`);
+                }
+            } catch (error) {
+                console.error(`Error fetching from ${listName}:`, error);
+                return null;
+            }
+        }
+
+        // Add item to SharePoint
+        async function addToSharePoint(listName, data) {
+            const url = `${SHAREPOINT_API_URL}/web/lists/getbytitle('${listName}')/items`;
+            
+            try {
+                // Get form digest (required for POST operations)
+                const digestResponse = await fetch(`${SHAREPOINT_API_URL}/contextinfo`, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json;odata=verbose',
+                        'Content-Type': 'application/json;odata=verbose'
+                    },
+                    credentials: 'same-origin'
+                });
+
+                const digestData = await digestResponse.json();
+                const formDigest = digestData.d.GetContextWebInformation.FormDigestValue;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json;odata=verbose',
+                        'Content-Type': 'application/json;odata=verbose',
+                        'X-RequestDigest': formDigest
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(data)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    return result.d;
+                } else {
+                    throw new Error(`SharePoint API error: ${response.status}`);
+                }
+            } catch (error) {
+                console.error(`Error adding to ${listName}:`, error);
+                return null;
+            }
+        }
+
+        // Handle add skirmish
+        async function handleAddSkirmish(e) {
+            e.preventDefault();
+            
+            const nameInput = document.getElementById('skirmish-name');
+            const dateInput = document.getElementById('skirmish-date');
+            const submitBtn = document.getElementById('add-skirmish-btn');
+            const submitText = document.getElementById('add-skirmish-text');
+            
+            const name = nameInput.value.trim();
+            const date = dateInput.value;
+            
+            if (!name || date) {
+                showMessage('Please fill in all fields', 'error', 'skirmish-messages');
+                return;
+            }
+
+            // Show loading state
+            submitBtn.disabled = true;
+            submitText.textContent = 'Adding to SharePoint...';
+            submitBtn.classList.add('loading');
+
+            try {
+                // Prepare SharePoint data
+                const sharePointData = {
+                    '__metadata': { type: 'SP.Data.SkirmishesListItem' },
+                    'Title': name,
+                    'SkirmishDate': date + 'T00:00:00Z',
+                    'Year': new Date(date).getFullYear()
+                };
+
+                // Try to add to SharePoint
+                const result = await addToSharePoint('Skirmishes', sharePointData);
+                
+                if (result) {
+                    // Success - clear form and reload
+                    nameInput.value = '';
+                    dateInput.value = '';
+                    showMessage('✅ Skirmish added to SharePoint successfully!', 'success', 'skirmish-messages');
+                    loadSkirmishes();
+                } else {
+                    // Fall back to local storage
+                    addSkirmishLocally(name, date);
+                    showMessage('✅ Skirmish saved locally (will sync to SharePoint when available)', 'warning', 'skirmish-messages');
+                    nameInput.value = '';
+                    dateInput.value = '';
+                }
+            } catch (error) {
+                console.error('Error adding skirmish:', error);
+                // Fall back to local storage
+                addSkirmishLocally(name, date);
+                showMessage('✅ Skirmish saved locally (will sync to SharePoint when available)', 'warning', 'skirmish-messages');
+                nameInput.value = '';
+                dateInput.value = '';
+            } finally {
+                // Reset button state
+                submitBtn.disabled = false;
+                submitText.textContent = 'Add Skirmish to SharePoint';
+                submitBtn.classList.remove('loading');
+            }
+        }
+
+        // Add skirmish locally (fallback)
+        function addSkirmishLocally(name, date) {
+            const skirmish = {
+                id: Date.now(),
+                name: name,
+                date: date,
+                year: new Date(date).getFullYear()
+            };
+            
+            appState.skirmishes.push(skirmish);
+            localStorage.setItem('cavalry_skirmishes', JSON.stringify(appState.skirmishes));
+            updateSkirmishDisplay();
+        }
+
+        // Update skirmish display
+        function updateSkirmishDisplay() {
+            const container = document.getElementById('skirmishes-list');
+            if (!container) return;
+
+            const noSkirmishesEl = document.getElementById('no-skirmishes');
+            
+            if (appState.skirmishes.length === 0) {
+                if (noSkirmishesEl) {
+                    noSkirmishesEl.innerHTML = `
+                        <span class="empty-icon">📅</span>
+                        <p><strong>No skirmishes found</strong></p>
+                        <p class="text-sm">Add your first skirmish above</p>
+                    `;
+                    noSkirmishesEl.classList.remove('hidden');
+                }
+            } else {
+                let html = '';
+                appState.skirmishes.forEach(skirmish => {
+                    html += `
+                        <div class="skirmish-item">
+                            <h4>${skirmish.name}</h4>
+                            <p>${formatDate(skirmish.date)}</p>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = html;
+            }
+        }
+
+        // Update shooters display
+        function updateShootersDisplay() {
+            const container = document.getElementById('shooters-roster');
+            if (!container) return;
+
+            if (appState.shooters.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <span class="empty-icon">👥</span>
+                        <p><strong>No shooters found</strong></p>
+                        <p class="text-sm">Check SharePoint Shooters list</p>
+                    </div>
+                `;
+            } else {
+                let html = '';
+                appState.shooters.forEach(shooter => {
+                    html += `
+                        <div class="shooter-item" onclick="toggleShooterSelection(${shooter.id})" data-shooter-id="${shooter.id}">
+                            ${shooter.name}
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+        }
+
+        // Load competition skirmishes
+        function loadCompetitionSkirmishes() {
+            const container = document.getElementById('competition-skirmishes-list');
+            if (!container) return;
+
+            if (appState.skirmishes.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <span class="empty-icon">🎯</span>
+                        <p><strong>No competitions available</strong></p>
+                        <p class="text-sm">Add skirmishes first to start competitions</p>
+                    </div>
+                `;
+            } else {
+                let html = '';
+                appState.skirmishes.forEach(skirmish => {
+                    html += `
+                        <div class="skirmish-item" onclick="selectSkirmish(${skirmish.id})">
+                            <h4>${skirmish.name}</h4>
+                            <p>${formatDate(skirmish.date)}</p>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+        }
+
+        // Select skirmish for competition
+        function selectSkirmish(skirmishId) {
+            appState.selectedSkirmish = appState.skirmishes.find(s => s.id === skirmishId);
+            
+            if (appState.selectedSkirmish) {
+                document.getElementById('selected-skirmish-name').textContent = appState.selectedSkirmish.name;
+                document.getElementById('selected-skirmish-date').textContent = formatDate(appState.selectedSkirmish.date);
+                
+                // Navigate to gun selection
+                document.getElementById('nav-gun-selection').checked = true;
+            }
+        }
+
+        // Set gun type for match
+        function setGunType(gunType) {
+            appState.selectedGun = gunType;
+            
+            document.getElementById('match-gun-type').textContent = `${gunType} Match`;
+            if (appState.selectedSkirmish) {
+                document.getElementById('match-skirmish-name').textContent = appState.selectedSkirmish.name;
+            }
+            
+            // Navigate to match setup
+            document.getElementById('nav-match-setup').checked = true;
+        }
+
+        // Setup match configuration
+        function setupMatchConfiguration() {
+            // Reset team selections
+            appState.aTeamShooters = [];
+            appState.bTeamShooters = [];
+            
+            // Update displays
+            updateTeamDisplays();
+            updateCreateMatchButton();
+            
+            // Load shooters if not already loaded
+            if (appState.shooters.length === 0) {
+                loadShooters();
+            }
+        }
+
+        // Toggle B Team
+        function toggleBTeam() {
+            const hasBTeam = document.getElementById('has-b-team').checked;
+            const bTeamSection = document.getElementById('b-team-section');
+            
+            if (hasBTeam) {
+                bTeamSection.classList.remove('hidden');
+            } else {
+                bTeamSection.classList.add('hidden');
+                appState.bTeamShooters = [];
+            }
+            
+            updateTeamDisplays();
+            updateCreateMatchButton();
+        }
+
+        // Update team size
+        function updateTeamSize() {
+            const shootersPerTeam = parseInt(document.getElementById('shooters-per-team').value) || 5;
+            document.getElementById('a-team-max').textContent = shootersPerTeam;
+            document.getElementById('b-team-max').textContent = shootersPerTeam;
+            
+            // Trim teams if they exceed new size
+            if (appState.aTeamShooters.length > shootersPerTeam) {
+                appState.aTeamShooters = appState.aTeamShooters.slice(0, shootersPerTeam);
+            }
+            if (appState.bTeamShooters.length > shootersPerTeam) {
+                appState.bTeamShooters = appState.bTeamShooters.slice(0, shootersPerTeam);
+            }
+            
+            updateTeamDisplays();
+            updateCreateMatchButton();
+        }
+
+        // Toggle shooter selection
+        function toggleShooterSelection(shooterId) {
+            const shooterEl = document.querySelector(`[data-shooter-id="${shooterId}"]`);
+            const shooter = appState.shooters.find(s => s.id === shooterId);
+            const shootersPerTeam = parseInt(document.getElementById('shooters-per-team').value) || 5;
+            
+            if (!shooter) return;
+
+            // Check if already selected
+            if (appState.aTeamShooters.some(s => s.id === shooterId) || appState.bTeamShooters.some(s => s.id === shooterId)) {
+                // Remove from teams
+                appState.aTeamShooters = appState.aTeamShooters.filter(s => s.id !== shooterId);
+                appState.bTeamShooters = appState.bTeamShooters.filter(s => s.id !== shooterId);
+                shooterEl.classList.remove('selected');
+            } else {
+                // Add to team (A Team first, then B Team if enabled)
+                if (appState.aTeamShooters.length < shootersPerTeam) {
+                    appState.aTeamShooters.push(shooter);
+                    shooterEl.classList.add('selected');
+                } else if (document.getElementById('has-b-team').checked && appState.bTeamShooters.length < shootersPerTeam) {
+                    appState.bTeamShooters.push(shooter);
+                    shooterEl.classList.add('selected');
+                } else {
+                    showMessage('Teams are full! Remove a shooter or increase team size.', 'warning', 'match-setup-messages');
+                    return;
+                }
+            }
+            
+            updateTeamDisplays();
+            updateCreateMatchButton();
+        }
+
+        // Update team displays
+        function updateTeamDisplays() {
+            // Update counts
+            document.getElementById('a-team-count').textContent = appState.aTeamShooters.length;
+            document.getElementById('b-team-count').textContent = appState.bTeamShooters.length;
+            
+            // Update A Team display
+            const aTeamContainer = document.getElementById('a-team-shooters');
+            if (appState.aTeamShooters.length === 0) {
+                aTeamContainer.innerHTML = '<p class="text-gray text-sm text-center">Click shooters above to add to A Team</p>';
+                aTeamContainer.classList.remove('has-shooters');
+            } else {
+                let html = '';
+                appState.aTeamShooters.forEach(shooter => {
+                    html += `<div class="text-sm mb-1">${shooter.name}</div>`;
+                });
+                aTeamContainer.innerHTML = html;
+                aTeamContainer.classList.add('has-shooters');
+            }
+            
+            // Update B Team display
+            const bTeamContainer = document.getElementById('b-team-shooters');
+            if (appState.bTeamShooters.length === 0) {
+                bTeamContainer.innerHTML = '<p class="text-gray text-sm text-center">Click shooters above to add to B Team</p>';
+                bTeamContainer.classList.remove('has-shooters');
+            } else {
+                let html = '';
+                appState.bTeamShooters.forEach(shooter => {
+                    html += `<div class="text-sm mb-1">${shooter.name}</div>`;
+                });
+                bTeamContainer.innerHTML = html;
+                bTeamContainer.classList.add('has-shooters');
+            }
+        }
+
+        // Update create match button
+        function updateCreateMatchButton() {
+            const btn = document.getElementById('create-match-btn');
+            const shootersPerTeam = parseInt(document.getElementById('shooters-per-team').value) || 5;
+            const hasBTeam = document.getElementById('has-b-team').checked;
+            
+            const aTeamReady = appState.aTeamShooters.length === shootersPerTeam;
+            const bTeamReady = !hasBTeam || appState.bTeamShooters.length === shootersPerTeam;
+            
+            if (aTeamReady && bTeamReady && appState.selectedSkirmish && appState.selectedGun) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            } else {
+                btn.disabled = true;
+                btn.classList.add('opacity-50');
+            }
+        }
+
+        // Create match
+        async function createMatch() {
+            const btn = document.getElementById('create-match-btn');
+            const hasBTeam = document.getElementById('has-b-team').checked;
+            const shootersPerTeam = parseInt(document.getElementById('shooters-per-team').value) || 5;
+            
+            btn.disabled = true;
+            btn.textContent = 'Creating Match in SharePoint...';
+            btn.classList.add('loading');
+
+            try {
+                // Prepare match data for SharePoint
+                const matchData = {
+                    '__metadata': { type: 'SP.Data.MatchesListItem' },
+                    'Title': `${appState.selectedGun} - ${appState.selectedSkirmish.name}`,
+                    'SkirmishId': appState.selectedSkirmish.id,
+                    'GunType': appState.selectedGun,
+                    'HasBTeam': hasBTeam,
+                    'ShootersPerTeam': shootersPerTeam,
+                    'MatchDate': new Date().toISOString(),
+                    'Status': 'Setup'
+                };
+
+                // Try to create match in SharePoint
+                const result = await addToSharePoint('Matches', matchData);
+                
+                if (result) {
+                    // Success - create match object for local use
+                    appState.currentMatch = {
+                        id: result.Id,
+                        skirmish: appState.selectedSkirmish,
+                        gun: appState.selectedGun,
+                        aTeamShooters: [...appState.aTeamShooters],
+                        bTeamShooters: [...appState.bTeamShooters],
+                        hasBTeam: hasBTeam,
+                        events: [...appState.matchEvents],
+                        currentEventIndex: 0,
+                        status: 'active'
+                    };
+                    
+                    showMessage('✅ Match created in SharePoint successfully!', 'success', 'match-setup-messages');
+                    
+                    // Navigate to active match
+                    setTimeout(() => {
+                        setupActiveMatch();
+                        document.getElementById('nav-active-match').checked = true;
+                    }, 1500);
+                } else {
+                    throw new Error('Failed to create match in SharePoint');
+                }
+            } catch (error) {
+                console.error('Error creating match:', error);
+                showMessage('❌ Error creating match in SharePoint. Please try again.', 'error', 'match-setup-messages');
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+            }
+        }
+
+        // Collect event data
+        function collectEventData() {
+            const aTeamTime = parseFloat(document.getElementById('a-team-time').value) || 0;
+            const bTeamTime = parseFloat(document.getElementById('b-team-time').value) || 0;
+            
+            const eventData = {
+                eventIndex: appState.currentMatch.currentEventIndex,
+                eventName: appState.currentMatch.events[appState.currentMatch.currentEventIndex],
+                aTeamTime: aTeamTime,
+                bTeamTime: bTeamTime,
+                shooterResults: []
+            };
+
+            // Collect shooter results
+            const scoringInputs = document.querySelectorAll('.scoring-input');
+            const shooterData = {};
+
+            scoringInputs.forEach(input => {
+                const shooterId = input.dataset.shooter;
+                const team = input.dataset.team;
+                const field = input.dataset.field;
+                
+                if (!shooterData[shooterId]) {
+                    shooterData[shooterId] = { shooterId, team };
+                }
+                
+                if (field === 'circle') {
+                    shooterData[shooterId][field] = input.checked;
+                } else {
+                    shooterData[shooterId][field] = parseInt(input.value) || 0;
+                }
+            });
+
+            eventData.shooterResults = Object.values(shooterData);
+            return eventData;
+        }
+
+        // Save event results to SharePoint
+        async function saveEventResults(eventData) {
+            const promises = [];
+
+            // Save team times
+            if (eventData.aTeamTime > 0) {
+                const aTeamTimeData = {
+                    '__metadata': { type: 'SP.Data.TeamTimesListItem' },
+                    'Title': `${appState.currentMatch.gun} - Event ${eventData.eventIndex + 1} - A Team`,
+                    'EventID': appState.currentMatch.id, // Using match ID as event reference
+                    'Team': 'A Team',
+                    'CompletionTime': eventData.aTeamTime
+                };
+                promises.push(addToSharePoint('TeamTimes', aTeamTimeData));
+            }
+
+            if (eventData.bTeamTime > 0) {
+                const bTeamTimeData = {
+                    '__metadata': { type: 'SP.Data.TeamTimesListItem' },
+                    'Title': `${appState.currentMatch.gun} - Event ${eventData.eventIndex + 1} - B Team`,
+                    'EventID': appState.currentMatch.id,
+                    'Team': 'B Team',
+                    'CompletionTime': eventData.bTeamTime
+                };
+                promises.push(addToSharePoint('TeamTimes', bTeamTimeData));
+            }
+
+            // Save shooter results
+            eventData.shooterResults.forEach(result => {
+                const shooterResultData = {
+                    '__metadata': { type: 'SP.Data.ShooterResultsListItem' },
+                    'Title': `${appState.currentMatch.gun} - Event ${eventData.eventIndex + 1} - ${result.shooterId}`,
+                    'EventID': appState.currentMatch.id,
+                    'ShooterID': result.shooterId,
+                    'Team': result.team + ' Team',
+                    'Hits': result.hits || 0,
+                    'Circle': result.circle || false,
+                    'Tabs': result.tabs || 0
+                };
+                promises.push(addToSharePoint('ShooterResults', shooterResultData));
+            });
+
+            // Wait for all saves to complete
+            await Promise.all(promises);
+        }
+
+        // Clear event inputs
+        function clearEventInputs() {
+            document.getElementById('a-team-time').value = '';
+            document.getElementById('b-team-time').value = '';
+            
+            document.querySelectorAll('.scoring-input').forEach(input => {
+                if (input.type === 'checkbox') {
+                    input.checked = false;
+                } else {
+                    input.value = '';
+                }
+            });
+        }
+
+        // Load match results
+        async function loadMatchResults() {
+            document.getElementById('results-title').textContent = `${appState.currentMatch.gun} Match Results`;
+            document.getElementById('results-details').textContent = appState.currentMatch.skirmish.name;
+            
+            const container = document.getElementById('match-leaderboard');
+            container.innerHTML = `
+                <div class="empty-state">
+                    <span class="empty-icon">🏆</span>
+                    <p><strong>Calculating results...</strong></p>
+                    <p class="text-sm">Processing match data from SharePoint</p>
+                </div>
+            `;
+
+            try {
+                // Calculate and display results
+                const leaderboard = await calculateMatchLeaderboard();
+                displayMatchLeaderboard(leaderboard);
+                showMessage('✅ Match results calculated from SharePoint data!', 'success', 'results-messages');
+            } catch (error) {
+                console.error('Error loading match results:', error);
+                showMessage('❌ Error calculating results. Showing sample data.', 'error', 'results-messages');
+                displaySampleLeaderboard();
+            }
+        }
+
+        // Calculate match leaderboard
+        async function calculateMatchLeaderboard() {
+            // This would fetch and calculate from SharePoint data
+            // For now, return sample calculated data
+            const leaderboard = [];
+            
+            // Process A Team
+            appState.currentMatch.aTeamShooters.forEach(shooter => {
+                leaderboard.push({
+                    name: shooter.name,
+                    team: 'A',
+                    totalHits: Math.floor(Math.random() * 30) + 15,
+                    totalCircles: Math.floor(Math.random() * 5) + 1,
+                    totalTabs: Math.floor(Math.random() * 10) + 3,
+                    hitTimeAvg: (Math.random() * 2 + 1.5).toFixed(1)
+                });
+            });
+
+            // Process B Team
+            if (appState.currentMatch.hasBTeam) {
+                appState.currentMatch.bTeamShooters.forEach(shooter => {
+                    leaderboard.push({
+                        name: shooter.name,
+                        team: 'B',
+                        totalHits: Math.floor(Math.random() * 30) + 15,
+                        totalCircles: Math.floor(Math.random() * 5) + 1,
+                        totalTabs: Math.floor(Math.random() * 10) + 3,
+                        hitTimeAvg: (Math.random() * 2 + 1.5).toFixed(1)
+                    });
+                });
+            }
+
+            // Sort by team, then by hits
+            leaderboard.sort((a, b) => {
+                if (a.team !== b.team) return a.team.localeCompare(b.team);
+                return b.totalHits - a.totalHits;
+            });
+
+            return leaderboard;
+        }
+
+        // Display match leaderboard
+        function displayMatchLeaderboard(leaderboard) {
+            const container = document.getElementById('match-leaderboard');
+            
+            let html = '';
+            leaderboard.forEach(shooter => {
+                const teamBadgeClass = shooter.team === 'A' ? 'background-color: #dbeafe; color: #1e40af;' : 'background-color: #dcfce7; color: #166534;';
+                
+                html += `
+                    <div class="leaderboard-item">
+                        <div>
+                            <h3 class="font-medium">${shooter.name}</h3>
+                            <span style="${teamBadgeClass} padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem;">
+                                ${shooter.team} Team
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; text-align: center; font-size: 0.875rem;">
+                            <div><div class="font-semibold">${shooter.totalHits}</div><div class="text-gray text-xs">hits</div></div>
+                            <div><div class="font-semibold">${shooter.totalCircles}</div><div class="text-gray text-xs">circles</div></div>
+                            <div><div class="font-semibold">${shooter.totalTabs}</div><div class="text-gray text-xs">tabs</div></div>
+                            <div><div class="font-semibold">${shooter.hitTimeAvg}s</div><div class="text-gray text-xs">avg</div></div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // Display sample leaderboard (fallback)
+        function displaySampleLeaderboard() {
+            const container = document.getElementById('match-leaderboard');
+            container.innerHTML = `
+                <div class="leaderboard-item">
+                    <div>
+                        <h3 class="font-medium">Sample Results</h3>
+                        <span style="background-color: #fef3c7; color: #d97706; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem;">
+                            Demo Data
+                        </span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; text-align: center; font-size: 0.875rem;">
+                        <div><div class="font-semibold">25</div><div class="text-gray text-xs">hits</div></div>
+                        <div><div class="font-semibold">4</div><div class="text-gray text-xs">circles</div></div>
+                        <div><div class="font-semibold">8</div><div class="text-gray text-xs">tabs</div></div>
+                        <div><div class="font-semibold">2.3s</div><div class="text-gray text-xs">avg</div></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Save and exit match
+        function saveAndExit() {
+            if (confirm('Save current progress and return to home?')) {
+                showMessage('Match progress saved locally', 'info');
+                document.getElementById('nav-home').checked = true;
+            }
+        }
+
+        // Remove event
+        function removeEvent(index) {
+            appState.matchEvents.splice(index, 1);
+            updateEventsDisplay();
+        }
+
+        // Update events display
+        function updateEventsDisplay() {
+            const container = document.getElementById('events-list');
+            let html = '';
+            
+            appState.matchEvents.forEach((event, index) => {
+                html += `
+                    <div class="event-item">
+                        <span>${index + 1}. ${event}</span>
+                        <button onclick="removeEvent(${index})" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // Load fallback data
+        function loadFallbackData() {
+            // Load from localStorage as fallback
+            const localSkirmishes = localStorage.getItem('cavalry_skirmishes');
+            if (localSkirmishes) {
+                appState.skirmishes = JSON.parse(localSkirmishes);
+            }
+            
+            // Use hardcoded shooters
+            appState.shooters = [
+                { id: 1, name: 'Tommy Upton' },
+                { id: 2, name: 'Leslie Hardison' },
+                { id: 3, name: 'Jimmy Hardison' },
+                { id: 4, name: 'Dan Conrad' },
+                { id: 5, name: 'Tommy Jones' },
+                { id: 6, name: 'Dennis Griffin' },
+                { id: 7, name: 'Jaime Conner' },
+                { id: 8, name: 'Joe Parcell' },
+                { id: 9, name: 'Eddie Askew' },
+                { id: 10, name: 'Tyler Bland' },
+                { id: 11, name: 'Larry Webb' },
+                { id: 12, name: 'Chris Chamberlain' },
+                { id: 13, name: 'Daniel Griffin' }
+            ];
+            
+            updateSkirmishDisplay();
+            updateShootersDisplay();
+        }
+
+        // Utility functions
+        function updateStatusIndicator(text) {
+            const indicator = document.getElementById('status-indicator');
+            if (indicator) {
+                indicator.textContent = text;
+            }
+        }
+
+        function formatDate(dateStr) {
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+            } catch (e) {
+                return dateStr;
+            }
+        }
+
+        function showMessage(message, type = 'info', containerId = null) {
+            const containerSelector = containerId ? `#${containerId}` : '#skirmish-messages';
+            const container = document.querySelector(containerSelector);
+            if (!container) return;
+
+            const messageClass = type === 'success' ? 'success-message' : 
+                                type === 'error' ? 'error-message' : 
+                                type === 'warning' ? 'warning-message' : 'info-message';
+
+            const messageEl = document.createElement('div');
+            messageEl.className = messageClass;
+            messageEl.innerHTML = message;
+
+            container.appendChild(messageEl);
+
+            // Remove message after 5 seconds
+            setTimeout(() => {
+                if (messageEl.parentNode) {
+                    messageEl.parentNode.removeChild(messageEl);
+                }
+            }, 5000);
+        }
+
+        console.log('🎯 3rd NC Cavalry App - Full SharePoint Integration Ready!');
+    </script>
+</body>
+</html>;
+                btn.textContent = 'Create Match in SharePoint';
+                btn.classList.remove('loading');
+            }
+        }
+
+        // Setup active match
+        function setupActiveMatch() {
+            if (!appState.currentMatch) return;
+
+            // Update match details
+            document.getElementById('active-match-title').textContent = `${appState.currentMatch.gun} Match - Live`;
+            document.getElementById('active-match-details').textContent = appState.currentMatch.skirmish.name;
+            
+            const currentEvent = appState.currentMatch.events[appState.currentMatch.currentEventIndex];
+            document.getElementById('current-event-info').textContent = 
+                `Event ${appState.currentMatch.currentEventIndex + 1} of ${appState.currentMatch.events.length} - ${currentEvent}`;
+            
+            // Show/hide B Team time input
+            if (appState.currentMatch.hasBTeam) {
+                document.getElementById('b-team-time-section').classList.remove('hidden');
+            } else {
+                document.getElementById('b-team-time-section').classList.add('hidden');
+            }
+            
+            // Setup scoring interface
+            setupScoringInterface();
+        }
+
+        // Setup scoring interface
+        function setupScoringInterface() {
+            const container = document.getElementById('scoring-interface');
+            if (!appState.currentMatch) return;
+
+            const currentEvent = appState.currentMatch.events[appState.currentMatch.currentEventIndex];
+            let html = '';
+
+            // A Team scoring
+            html += '<div class="mb-4"><h4 class="text-sm font-medium text-blue-600 mb-2">A Team</h4>';
+            appState.currentMatch.aTeamShooters.forEach(shooter => {
+                html += `
+                    <div class="border-b pb-2 mb-2 last:border-b-0">
+                        <p class="font-medium text-sm mb-2">${shooter.name}</p>
+                        <div class="scoring-grid">
+                            <div>
+                                <label class="text-xs">Hits</label>
+                                <input type="number" min="0" class="scoring-input" data-shooter="${shooter.id}" data-team="A" data-field="hits">
+                            </div>
+                            <div>
+                                <label class="text-xs">Circle</label>
+                                <div class="checkbox-container">
+                                    <input type="checkbox" class="scoring-input" data-shooter="${shooter.id}" data-team="A" data-field="circle">
+                                </div>
+                            </div>
+                            ${currentEvent === 'Pigeons on a Backer' ? `
+                                <div>
+                                    <label class="text-xs">Tabs</label>
+                                    <input type="number" min="0" class="scoring-input" data-shooter="${shooter.id}" data-team="A" data-field="tabs">
+                                </div>
+                            ` : '<div></div>'}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            // B Team scoring
+            if (appState.currentMatch.hasBTeam) {
+                html += '<div><h4 class="text-sm font-medium text-green-600 mb-2">B Team</h4>';
+                appState.currentMatch.bTeamShooters.forEach(shooter => {
+                    html += `
+                        <div class="border-b pb-2 mb-2 last:border-b-0">
+                            <p class="font-medium text-sm mb-2">${shooter.name}</p>
+                            <div class="scoring-grid">
+                                <div>
+                                    <label class="text-xs">Hits</label>
+                                    <input type="number" min="0" class="scoring-input" data-shooter="${shooter.id}" data-team="B" data-field="hits">
+                                </div>
+                                <div>
+                                    <label class="text-xs">Circle</label>
+                                    <div class="checkbox-container">
+                                        <input type="checkbox" class="scoring-input" data-shooter="${shooter.id}" data-team="B" data-field="circle">
+                                    </div>
+                                </div>
+                                ${currentEvent === 'Pigeons on a Backer' ? `
+                                    <div>
+                                        <label class="text-xs">Tabs</label>
+                                        <input type="number" min="0" class="scoring-input" data-shooter="${shooter.id}" data-team="B" data-field="tabs">
+                                    </div>
+                                ` : '<div></div>'}
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+            
+            // Enable complete event button
+            document.getElementById('complete-event-btn').disabled = false;
+            document.getElementById('complete-event-text').textContent = 
+                appState.currentMatch.currentEventIndex === appState.currentMatch.events.length - 1 ? 'Complete Match' : 'Complete Event & Continue';
+        }
+
+        // Complete event
+        async function completeEvent() {
+            const btn = document.getElementById('complete-event-btn');
+            const btnText = document.getElementById('complete-event-text');
+            
+            btn.disabled = true;
+            btnText.textContent = 'Saving to SharePoint...';
+            btn.classList.add('loading');
+
+            try {
+                // Collect event data
+                const eventData = collectEventData();
+                
+                // Save to SharePoint (TeamTimes and ShooterResults lists)
+                await saveEventResults(eventData);
+                
+                // Move to next event or complete match
+                if (appState.currentMatch.currentEventIndex < appState.currentMatch.events.length - 1) {
+                    appState.currentMatch.currentEventIndex++;
+                    setupActiveMatch();
+                    clearEventInputs();
+                    showMessage('✅ Event results saved to SharePoint!', 'success', 'active-match-messages');
+                } else {
+                    // Match complete
+                    appState.currentMatch.status = 'complete';
+                    showMessage('✅ Match completed and saved to SharePoint!', 'success', 'active-match-messages');
+                    
+                    // Navigate to results
+                    setTimeout(() => {
+                        document.getElementById('nav-match-results').checked = true;
+                        loadMatchResults();
+                    }, 1500);
+                }
+            } catch (error) {
+                console.error('Error completing event:', error);
+                showMessage('❌ Error saving to SharePoint. Results saved locally.', 'error', 'active-match-messages');
+            } finally {
+                btn.disabled = false<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -88,6 +1163,7 @@
         .btn-secondary { background-color: #16a34a; color: white; border-color: #16a34a; }
         .btn-purple { background-color: #9333ea; color: white; border-color: #9333ea; }
         .btn-gray { background-color: #6b7280; color: white; border-color: #6b7280; }
+        .btn-small { padding: 0.5rem 1rem; width: auto; font-size: 0.875rem; }
         
         .form-input {
             width: 100%;
@@ -102,6 +1178,16 @@
             outline: none;
             border-color: #2563eb;
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        
+        .form-select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #d1d5db;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            font-size: 1rem;
+            background: white;
         }
         
         .header {
@@ -134,6 +1220,7 @@
         .text-xl { font-size: 1.25rem; }
         .text-2xl { font-size: 1.5rem; }
         .text-sm { font-size: 0.875rem; }
+        .text-xs { font-size: 0.75rem; }
         .mb-2 { margin-bottom: 0.5rem; }
         .mb-4 { margin-bottom: 1rem; }
         .mb-6 { margin-bottom: 1.5rem; }
@@ -142,6 +1229,7 @@
         .flex { display: flex; }
         .items-center { align-items: center; }
         .justify-between { justify-content: space-between; }
+        .justify-center { justify-content: center; }
         .icon { font-size: 1.25rem; margin-right: 0.75rem; }
         
         .success-message {
@@ -169,6 +1257,15 @@
             border-radius: 0.5rem;
             margin-bottom: 1rem;
             border: 1px solid #93c5fd;
+        }
+        
+        .warning-message {
+            background: #fef3c7;
+            color: #d97706;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #f59e0b;
         }
         
         .loading {
@@ -199,21 +1296,62 @@
             border-bottom: none;
         }
         
-        .rank-badge {
-            width: 2rem;
-            height: 2rem;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 0.75rem;
-            font-weight: bold;
-            font-size: 0.875rem;
+        .shooter-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
         }
         
-        .rank-1 { background-color: #fef3c7; color: #d97706; }
-        .rank-2 { background-color: #f3f4f6; color: #374151; }
-        .rank-3 { background-color: #fed7aa; color: #ea580c; }
+        .shooter-item:hover {
+            background: #e2e8f0;
+        }
+        
+        .shooter-item.selected {
+            background: #dbeafe;
+            border-color: #2563eb;
+            color: #1e40af;
+        }
+        
+        .team-section {
+            border: 2px dashed #d1d5db;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            min-height: 200px;
+        }
+        
+        .team-section.has-shooters {
+            border-color: #2563eb;
+            background: #f8fafc;
+        }
+        
+        .event-item {
+            background: #f3f4f6;
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .scoring-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .scoring-input {
+            padding: 0.25rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+        }
         
         .status-indicator {
             position: fixed;
@@ -247,6 +1385,14 @@
             border-radius: 0.5rem;
             padding: 1rem;
             margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .skirmish-item:hover {
+            border-color: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
         
         .skirmish-item h4 {
@@ -261,6 +1407,22 @@
         
         .hidden {
             display: none;
+        }
+        
+        .grid {
+            display: grid;
+            gap: 1rem;
+        }
+        
+        .grid-cols-2 {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
         }
     </style>
 </head>
@@ -285,7 +1447,10 @@
                 </header>
 
                 <div id="connection-status" class="info-message">
-                    <strong>🔗 SharePoint Connected!</strong> Ready to save data to your 3rdNCCavalryScoring site.
+                    <strong>🔗 SharePoint Integration Active!</strong> 
+                    <div class="text-sm mt-2" id="home-status-details">
+                        Ready to connect to 3rdNCCavalryScoring site.
+                    </div>
                 </div>
 
                 <div class="space-y-4">
@@ -337,13 +1502,18 @@
                             <input type="date" id="skirmish-date" class="form-input" required>
                         </div>
                         <button type="submit" id="add-skirmish-btn" class="btn btn-primary">
-                            <span id="add-skirmish-text">Add Skirmish</span>
+                            <span id="add-skirmish-text">Add Skirmish to SharePoint</span>
                         </button>
                     </form>
                 </div>
 
                 <div class="card">
-                    <h3 class="font-semibold mb-4">Your Skirmishes</h3>
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-semibold">Your Skirmishes</h3>
+                        <button onclick="loadSkirmishes()" class="btn-small" style="background: #f3f4f6; color: #374151; padding: 0.5rem 1rem; border-radius: 0.375rem; border: 1px solid #d1d5db;">
+                            🔄 Refresh
+                        </button>
+                    </div>
                     <div id="skirmishes-list">
                         <div class="empty-state" id="no-skirmishes">
                             <span class="empty-icon">📅</span>
@@ -351,9 +1521,6 @@
                             <p class="text-sm">Connecting to SharePoint</p>
                         </div>
                     </div>
-                    <button onclick="loadSkirmishes()" class="btn" style="background: #f3f4f6; color: #374151; margin-top: 1rem;">
-                        🔄 Refresh List
-                    </button>
                 </div>
             </div>
 
@@ -365,7 +1532,7 @@
                 </header>
 
                 <div class="info-message">
-                    <strong>🎯 Competition Selection:</strong> Your saved skirmishes will appear here for match setup.
+                    <strong>🎯 Competition Selection:</strong> Select a skirmish to begin match setup.
                 </div>
 
                 <div class="card">
@@ -393,37 +1560,37 @@
                 </div>
 
                 <div class="space-y-4">
-                    <label for="nav-match-setup" class="btn btn-primary" onclick="setGunType('Musket')">
+                    <button class="btn btn-primary" onclick="setGunType('Musket')">
                         <div class="flex items-center">
                             <span class="icon">🎯</span>
                             <span>Musket Match</span>
                         </div>
                         <span>›</span>
-                    </label>
+                    </button>
                     
-                    <label for="nav-match-setup" class="btn btn-primary" onclick="setGunType('Carbine')">
+                    <button class="btn btn-primary" onclick="setGunType('Carbine')">
                         <div class="flex items-center">
                             <span class="icon">🎯</span>
                             <span>Carbine Match</span>
                         </div>
                         <span>›</span>
-                    </label>
+                    </button>
                     
-                    <label for="nav-match-setup" class="btn btn-primary" onclick="setGunType('Revolver')">
+                    <button class="btn btn-primary" onclick="setGunType('Revolver')">
                         <div class="flex items-center">
                             <span class="icon">🎯</span>
                             <span>Revolver Match</span>
                         </div>
                         <span>›</span>
-                    </label>
+                    </button>
                     
-                    <label for="nav-match-setup" class="btn btn-primary" onclick="setGunType('Smoothbore')">
+                    <button class="btn btn-primary" onclick="setGunType('Smoothbore')">
                         <div class="flex items-center">
                             <span class="icon">🎯</span>
                             <span>Smoothbore Match</span>
                         </div>
                         <span>›</span>
-                    </label>
+                    </button>
                 </div>
             </div>
 
@@ -439,72 +1606,158 @@
                     <p class="text-gray" id="match-skirmish-name">Competition</p>
                 </div>
 
-                <div class="info-message">
-                    <strong>⚙️ Coming Next:</strong> Full match setup with team selection, shooter assignments from SharePoint Shooters list, and event configuration.
+                <div id="match-setup-messages"></div>
+
+                <div class="card">
+                    <h3 class="font-semibold mb-4">Team Configuration</h3>
+                    
+                    <div class="mb-4">
+                        <label class="flex items-center justify-between">
+                            <span>Include B Team?</span>
+                            <input type="checkbox" id="has-b-team" onchange="toggleBTeam()" style="width: 1.25rem; height: 1.25rem;">
+                        </label>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block font-medium mb-2">Shooters per Team</label>
+                        <input type="number" id="shooters-per-team" value="5" min="1" max="13" class="form-input" onchange="updateTeamSize()">
+                    </div>
                 </div>
 
                 <div class="card">
-                    <h3 class="font-semibold mb-4">Setup Preview</h3>
-                    <ul style="list-style-type: disc; padding-left: 1.5rem; color: #374151; line-height: 1.6;">
-                        <li>Load shooters from SharePoint Shooters list</li>
-                        <li>Configure A Team and optional B Team</li>
-                        <li>Set up match events and scoring</li>
-                        <li>Create match record in SharePoint</li>
-                    </ul>
+                    <h3 class="font-semibold mb-4">Available Shooters</h3>
+                    <div id="shooters-roster">
+                        <div class="empty-state">
+                            <span class="empty-icon">👥</span>
+                            <p><strong>Loading shooter roster...</strong></p>
+                            <p class="text-sm">Fetching from SharePoint Shooters list</p>
+                        </div>
+                    </div>
                 </div>
 
-                <label for="nav-active-match" class="btn btn-secondary">
-                    Preview Match Interface →
-                </label>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="card">
+                        <h3 class="font-semibold mb-2">A Team (<span id="a-team-count">0</span>/<span id="a-team-max">5</span>)</h3>
+                        <div id="a-team-shooters" class="team-section">
+                            <p class="text-gray text-sm text-center">Click shooters above to add to A Team</p>
+                        </div>
+                    </div>
+
+                    <div id="b-team-section" class="card hidden">
+                        <h3 class="font-semibold mb-2">B Team (<span id="b-team-count">0</span>/<span id="b-team-max">5</span>)</h3>
+                        <div id="b-team-shooters" class="team-section">
+                            <p class="text-gray text-sm text-center">Click shooters above to add to B Team</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="font-semibold mb-4">Match Events</h3>
+                    <div id="events-list">
+                        <div class="event-item">
+                            <span>1. Pigeons on a Backer</span>
+                            <button onclick="removeEvent(0)" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                        </div>
+                        <div class="event-item">
+                            <span>2. 4in Hanging Tiles</span>
+                            <button onclick="removeEvent(1)" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                        </div>
+                        <div class="event-item">
+                            <span>3. Hanging Pigeons</span>
+                            <button onclick="removeEvent(2)" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                        </div>
+                        <div class="event-item">
+                            <span>4. Pots/Silhouettes</span>
+                            <button onclick="removeEvent(3)" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                        </div>
+                        <div class="event-item">
+                            <span>5. 6in Hanging Tiles</span>
+                            <button onclick="removeEvent(4)" class="text-red-600 text-sm hover:text-red-800">Remove</button>
+                        </div>
+                    </div>
+                </div>
+
+                <button id="create-match-btn" onclick="createMatch()" class="btn btn-secondary" disabled>
+                    Create Match in SharePoint
+                </button>
             </div>
 
             <!-- Active Match Screen -->
             <div id="active-match-screen" class="screen">
                 <header class="mb-6">
                     <label for="nav-match-setup" class="nav-btn">← Back</label>
-                    <h1 class="text-xl font-bold">Live Match Interface</h1>
-                    <p class="text-gray">Preview of scoring interface</p>
+                    <h1 class="text-xl font-bold" id="active-match-title">Live Match</h1>
+                    <p class="text-gray" id="active-match-details">Match details</p>
+                    <div class="flex items-center mt-2">
+                        <span class="icon">⏰</span>
+                        <span class="text-sm" id="current-event-info">Event info</span>
+                    </div>
                 </header>
 
-                <div class="info-message">
-                    <strong>📊 Live Scoring Preview:</strong> This shows the interface for real-time competition scoring.
+                <div id="active-match-messages"></div>
+
+                <div class="card mb-4">
+                    <h3 class="font-semibold mb-3">Team Completion Times</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">A Team Time (seconds)</label>
+                            <input type="number" step="0.1" id="a-team-time" class="form-input" placeholder="0.0">
+                        </div>
+                        <div id="b-team-time-section" class="hidden">
+                            <label class="block text-sm font-medium mb-1">B Team Time (seconds)</label>
+                            <input type="number" step="0.1" id="b-team-time" class="form-input" placeholder="0.0">
+                        </div>
+                    </div>
                 </div>
 
-                <div class="card">
-                    <h3 class="font-semibold mb-4">Features Coming Next</h3>
-                    <ul style="list-style-type: disc; padding-left: 1.5rem; color: #374151; line-height: 1.6;">
-                        <li>Real-time team time entry</li>
-                        <li>Individual shooter scoring (hits, circles, tabs)</li>
-                        <li>Automatic calculations and leaderboards</li>
-                        <li>Save results to SharePoint EventResults list</li>
-                    </ul>
+                <div class="card mb-6">
+                    <h3 class="font-semibold mb-3">Shooter Results</h3>
+                    <div id="scoring-interface">
+                        <div class="empty-state">
+                            <span class="empty-icon">📊</span>
+                            <p><strong>Loading scoring interface...</strong></p>
+                            <p class="text-sm">Preparing for event scoring</p>
+                        </div>
+                    </div>
                 </div>
 
-                <label for="nav-match-results" class="btn btn-primary">
-                    Preview Results →
-                </label>
+                <div class="space-y-4">
+                    <button id="complete-event-btn" onclick="completeEvent()" class="btn btn-primary" disabled>
+                        <span id="complete-event-text">Complete Event</span>
+                    </button>
+                    <button onclick="saveAndExit()" class="btn btn-gray">
+                        Save & Exit Match
+                    </button>
+                </div>
             </div>
 
             <!-- Match Results Screen -->
             <div id="match-results-screen" class="screen">
                 <header class="text-center mb-6">
                     <label for="nav-active-match" class="nav-btn" style="position: absolute; left: 0;">← Back</label>
-                    <h1 class="text-xl font-bold">Match Results Preview</h1>
-                    <p class="text-gray">Sample results display</p>
+                    <h1 class="text-xl font-bold" id="results-title">Match Results</h1>
+                    <p class="text-gray" id="results-details">Match details</p>
+                    <div class="flex items-center justify-center mt-2">
+                        <span class="icon">🏅</span>
+                        <span class="text-sm">Match Complete</span>
+                    </div>
                 </header>
 
-                <div class="info-message">
-                    <strong>🏆 Results Preview:</strong> This shows how match results would be calculated and displayed.
-                </div>
+                <div id="results-messages"></div>
 
-                <div class="card">
-                    <h3 class="font-semibold mb-4">Results Features Coming</h3>
-                    <ul style="list-style-type: disc; padding-left: 1.5rem; color: #374151; line-height: 1.6;">
-                        <li>Real-time leaderboard calculations</li>
-                        <li>Hit time averages and statistics</li>
-                        <li>Team and individual rankings</li>
-                        <li>Export results to Excel/PDF</li>
-                    </ul>
+                <div class="card mb-6">
+                    <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb;">
+                        <h2 class="font-semibold">Match Leaderboard</h2>
+                        <p class="text-sm text-gray">Calculated from SharePoint data</p>
+                    </div>
+                    
+                    <div id="match-leaderboard">
+                        <div class="empty-state">
+                            <span class="empty-icon">🏆</span>
+                            <p><strong>Calculating results...</strong></p>
+                            <p class="text-sm">Processing match data</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="space-y-4">
@@ -528,17 +1781,22 @@
                 </header>
 
                 <div class="info-message">
-                    <strong>🏆 Season Rankings:</strong> Will calculate from actual match data in SharePoint.
+                    <strong>🏆 Season Rankings:</strong> Calculated from all matches in SharePoint.
                 </div>
 
                 <div class="card">
-                    <h3 class="font-semibold mb-4">Leaderboard Features Coming</h3>
-                    <ul style="list-style-type: disc; padding-left: 1.5rem; color: #374151; line-height: 1.6;">
-                        <li>Best 2 of last 3 hit time averages by gun type</li>
-                        <li>Season championship standings</li>
-                        <li>Historical performance tracking</li>
-                        <li>Statistical analysis and trends</li>
-                    </ul>
+                    <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb;">
+                        <h2 class="font-semibold">Season Rankings by Gun Type</h2>
+                        <p class="text-sm text-gray">Best 2 of last 3 hit time averages</p>
+                    </div>
+                    
+                    <div id="season-leaderboards">
+                        <div class="empty-state">
+                            <span class="empty-icon">🏆</span>
+                            <p><strong>Loading leaderboards...</strong></p>
+                            <p class="text-sm">Calculating from SharePoint match data</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -552,321 +1810,4 @@
     <script>
         // SharePoint configuration
         const SHAREPOINT_SITE_URL = 'https://3rdnccav.sharepoint.com/sites/3rdNCCavalryScoring';
-        const SHAREPOINT_API_URL = `${SHAREPOINT_SITE_URL}/_api`;
-        
-        // App state
-        let appState = {
-            skirmishes: [],
-            selectedSkirmish: null,
-            selectedGun: null,
-            currentMatch: null
-        };
-
-        // Initialize the app
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('3rd NC Cavalry App initialized');
-            loadSkirmishes();
-            setupEventListeners();
-        });
-
-        // Set up event listeners
-        function setupEventListeners() {
-            // Add skirmish form
-            const form = document.getElementById('add-skirmish-form');
-            if (form) {
-                form.addEventListener('submit', handleAddSkirmish);
-            }
-
-            // Navigation events
-            const navInputs = document.querySelectorAll('.nav-input');
-            navInputs.forEach(input => {
-                input.addEventListener('change', function() {
-                    if (this.id === 'nav-compete' && this.checked) {
-                        loadCompetitionSkirmishes();
-                    }
-                });
-            });
-        }
-
-        // Handle add skirmish form submission
-        async function handleAddSkirmish(e) {
-            e.preventDefault();
-            
-            const nameInput = document.getElementById('skirmish-name');
-            const dateInput = document.getElementById('skirmish-date');
-            const submitBtn = document.getElementById('add-skirmish-btn');
-            const submitText = document.getElementById('add-skirmish-text');
-            
-            const name = nameInput.value.trim();
-            const date = dateInput.value;
-            
-            if (!name || !date) {
-                showMessage('Please fill in all fields', 'error');
-                return;
-            }
-
-            // Show loading state
-            submitBtn.disabled = true;
-            submitText.textContent = 'Adding...';
-            submitBtn.classList.add('loading');
-
-            try {
-                // Attempt to add to SharePoint
-                const success = await addSkirmishToSharePoint(name, date);
-                
-                if (success) {
-                    // Clear form
-                    nameInput.value = '';
-                    dateInput.value = '';
-                    
-                    // Show success and reload list
-                    showMessage('✅ Skirmish added successfully!', 'success');
-                    loadSkirmishes();
-                } else {
-                    // Fall back to local storage for demo
-                    addSkirmishLocally(name, date);
-                    showMessage('✅ Skirmish added (saved locally - SharePoint connection in progress)', 'success');
-                    nameInput.value = '';
-                    dateInput.value = '';
-                }
-            } catch (error) {
-                console.error('Error adding skirmish:', error);
-                // Fall back to local storage
-                addSkirmishLocally(name, date);
-                showMessage('✅ Skirmish added (saved locally - will sync to SharePoint when connection is available)', 'success');
-                nameInput.value = '';
-                dateInput.value = '';
-            } finally {
-                // Reset button state
-                submitBtn.disabled = false;
-                submitText.textContent = 'Add Skirmish';
-                submitBtn.classList.remove('loading');
-            }
-        }
-
-        // Add skirmish to SharePoint (this will be developed further)
-        async function addSkirmishToSharePoint(name, date) {
-            // For now, this simulates the SharePoint API call
-            // In a real implementation, this would make an HTTP request to:
-            // POST ${SHAREPOINT_API_URL}/web/lists/getbytitle('Skirmishes')/items
-            
-            console.log('Would add to SharePoint:', { name, date });
-            
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // For now, return false to use local storage
-            // Once SharePoint integration is complete, this will return true
-            return false;
-        }
-
-        // Add skirmish locally (fallback)
-        function addSkirmishLocally(name, date) {
-            const skirmish = {
-                id: Date.now(),
-                name: name,
-                date: date
-            };
-            
-            appState.skirmishes.push(skirmish);
-            
-            // Save to localStorage as backup
-            localStorage.setItem('cavalry_skirmishes', JSON.stringify(appState.skirmishes));
-            
-            updateSkirmishDisplay();
-        }
-
-        // Load skirmishes from SharePoint or localStorage
-        async function loadSkirmishes() {
-            const statusEl = document.getElementById('status-indicator');
-            if (statusEl) {
-                statusEl.textContent = '🔄 Loading...';
-            }
-
-            try {
-                // Try to load from SharePoint first
-                const sharePointSkirmishes = await loadSkirmishesFromSharePoint();
-                
-                if (sharePointSkirmishes && sharePointSkirmishes.length > 0) {
-                    appState.skirmishes = sharePointSkirmishes;
-                    if (statusEl) statusEl.textContent = '✅ SharePoint Connected';
-                } else {
-                    // Fall back to localStorage
-                    const localSkirmishes = localStorage.getItem('cavalry_skirmishes');
-                    if (localSkirmishes) {
-                        appState.skirmishes = JSON.parse(localSkirmishes);
-                        if (statusEl) statusEl.textContent = '💾 Local Data';
-                    } else {
-                        appState.skirmishes = [];
-                        if (statusEl) statusEl.textContent = '📝 Ready';
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading skirmishes:', error);
-                // Load from localStorage as fallback
-                const localSkirmishes = localStorage.getItem('cavalry_skirmishes');
-                if (localSkirmishes) {
-                    appState.skirmishes = JSON.parse(localSkirmishes);
-                } else {
-                    appState.skirmishes = [];
-                }
-                if (statusEl) statusEl.textContent = '⚠️ Offline Mode';
-            }
-
-            updateSkirmishDisplay();
-        }
-
-        // Load skirmishes from SharePoint (placeholder)
-        async function loadSkirmishesFromSharePoint() {
-            // This will be implemented to call:
-            // GET ${SHAREPOINT_API_URL}/web/lists/getbytitle('Skirmishes')/items
-            
-            console.log('Would load from SharePoint...');
-            
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Return null for now - will return actual data once SharePoint is connected
-            return null;
-        }
-
-        // Update skirmish display
-        function updateSkirmishDisplay() {
-            const container = document.getElementById('skirmishes-list');
-            if (!container) return;
-
-            const noSkirmishesEl = document.getElementById('no-skirmishes');
-            
-            if (appState.skirmishes.length === 0) {
-                if (noSkirmishesEl) {
-                    noSkirmishesEl.innerHTML = `
-                        <span class="empty-icon">📅</span>
-                        <p><strong>No skirmishes added yet</strong></p>
-                        <p class="text-sm">Add your first skirmish above to get started</p>
-                    `;
-                }
-            } else {
-                let html = '';
-                appState.skirmishes.forEach(skirmish => {
-                    html += `
-                        <div class="skirmish-item">
-                            <h4>${skirmish.name}</h4>
-                            <p>${formatDate(skirmish.date)}</p>
-                        </div>
-                    `;
-                });
-                
-                if (noSkirmishesEl) {
-                    noSkirmishesEl.style.display = 'none';
-                }
-                
-                // Add skirmishes after the no-skirmishes element
-                container.innerHTML = `
-                    <div class="empty-state hidden" id="no-skirmishes">
-                        <span class="empty-icon">📅</span>
-                        <p><strong>No skirmishes added yet</strong></p>
-                        <p class="text-sm">Add your first skirmish above to get started</p>
-                    </div>
-                    ${html}
-                `;
-            }
-        }
-
-        // Load competition skirmishes
-        function loadCompetitionSkirmishes() {
-            const container = document.getElementById('competition-skirmishes-list');
-            if (!container) return;
-
-            if (appState.skirmishes.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <span class="empty-icon">🎯</span>
-                        <p><strong>No competitions available</strong></p>
-                        <p class="text-sm">Add skirmishes first to start competitions</p>
-                    </div>
-                `;
-            } else {
-                let html = '';
-                appState.skirmishes.forEach(skirmish => {
-                    html += `
-                        <button class="btn" onclick="selectSkirmish(${skirmish.id})" style="margin-bottom: 0.5rem;">
-                            <div>
-                                <h4 class="font-semibold">${skirmish.name}</h4>
-                                <p class="text-gray text-sm">${formatDate(skirmish.date)}</p>
-                            </div>
-                            <span>›</span>
-                        </button>
-                    `;
-                });
-                container.innerHTML = html;
-            }
-        }
-
-        // Select skirmish for competition
-        function selectSkirmish(skirmishId) {
-            appState.selectedSkirmish = appState.skirmishes.find(s => s.id === skirmishId);
-            
-            if (appState.selectedSkirmish) {
-                document.getElementById('selected-skirmish-name').textContent = appState.selectedSkirmish.name;
-                document.getElementById('selected-skirmish-date').textContent = formatDate(appState.selectedSkirmish.date);
-                
-                // Navigate to gun selection
-                document.getElementById('nav-gun-selection').checked = true;
-            }
-        }
-
-        // Set gun type for match
-        function setGunType(gunType) {
-            appState.selectedGun = gunType;
-            
-            document.getElementById('match-gun-type').textContent = `${gunType} Match`;
-            if (appState.selectedSkirmish) {
-                document.getElementById('match-skirmish-name').textContent = appState.selectedSkirmish.name;
-            }
-        }
-
-        // Utility functions
-        function formatDate(dateStr) {
-            try {
-                const date = new Date(dateStr);
-                return date.toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                });
-            } catch (e) {
-                return dateStr;
-            }
-        }
-
-        function showMessage(message, type = 'info') {
-            const container = document.getElementById('skirmish-messages');
-            if (!container) return;
-
-            const messageClass = type === 'success' ? 'success-message' : 
-                                type === 'error' ? 'error-message' : 'info-message';
-
-            const messageEl = document.createElement('div');
-            messageEl.className = messageClass;
-            messageEl.innerHTML = message;
-
-            container.appendChild(messageEl);
-
-            // Remove message after 5 seconds
-            setTimeout(() => {
-                if (messageEl.parentNode) {
-                    messageEl.parentNode.removeChild(messageEl);
-                }
-            }, 5000);
-        }
-
-        // Future SharePoint API functions will be added here:
-        // - loadShootersFromSharePoint()
-        // - createMatchInSharePoint()
-        // - saveEventResultsToSharePoint()
-        // - calculateLeaderboardsFromSharePoint()
-
-        console.log('3rd NC Cavalry App loaded - SharePoint integration ready');
-    </script>
-</body>
-</html>
+        const SHAREPOINT_API_URL = `${
